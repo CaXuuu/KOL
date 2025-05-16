@@ -678,4 +678,609 @@ public class Main {
         City.generateAnalogClocksSvg(cities, analog);
     }
 }
+------------
+---------------
+------------
+--------------
+--------------
+// Sciagawka z Programowania Obiektowego (Java) - Kolokwium
+
+// 1. Klasa abstrakcyjna Clock
+public abstract class Clock {
+    protected int hour, minute, second;
+
+    public void setCurrentTime() {
+        LocalTime now = LocalTime.now();
+        this.hour = now.getHour();
+        this.minute = now.getMinute();
+        this.second = now.getSecond();
+    }
+
+    public void setTime(int hour, int minute, int second) {
+        if (hour < 0 || hour > 23) throw new IllegalArgumentException("Invalid hour: " + hour);
+        if (minute < 0 || minute > 59) throw new IllegalArgumentException("Invalid minute: " + minute);
+        if (second < 0 || second > 59) throw new IllegalArgumentException("Invalid second: " + second);
+        this.hour = hour;
+        this.minute = minute;
+        this.second = second;
+    }
+
+    @Override
+    public String toString() {
+        return String.format("%02d:%02d:%02d", hour, minute, second);
+    }
+}
+
+// 2. Enum - tryb zegara
+public enum TimeFormat {
+    H24, H12
+}
+
+// 3. Dziedziczenie: DigitalClock z formatem 12/24h
+public class DigitalClock extends Clock {
+    private TimeFormat format;
+
+    public DigitalClock(TimeFormat format) {
+        this.format = format;
+    }
+
+    @Override
+    public String toString() {
+        if (format == TimeFormat.H24) {
+            return super.toString();
+        } else {
+            int hour12 = hour % 12;
+            hour12 = (hour12 == 0) ? 12 : hour12;
+            String period = (hour < 12) ? "AM" : "PM";
+            return String.format("%d:%02d:%02d %s", hour12, minute, second, period);
+        }
+    }
+}
+
+// 4. Wczytywanie CSV i przetwarzanie danych: City
+public class City {
+    private String name;
+    private int timezoneOffset;
+    private double latitude, longitude;
+
+    public City(String name, int timezoneOffset, double latitude, double longitude) {
+        this.name = name;
+        this.timezoneOffset = timezoneOffset;
+        this.latitude = latitude;
+        this.longitude = longitude;
+    }
+
+    public static City parseLine(String line) {
+        String[] parts = line.split(",");
+        String name = parts[0];
+        int offset = Integer.parseInt(parts[1]);
+        double lat = parseCoordinate(parts[2]);
+        double lon = parseCoordinate(parts[3]);
+        return new City(name, offset, lat, lon);
+    }
+
+    private static double parseCoordinate(String coord) {
+        coord = coord.trim();
+        double value = Double.parseDouble(coord.replaceAll("[^0-9.-]", ""));
+        return coord.endsWith("S") || coord.endsWith("W") ? -value : value;
+    }
+
+    public static Map<String, City> parseFile(String path) throws IOException {
+        Map<String, City> map = new HashMap<>();
+        List<String> lines = Files.readAllLines(Paths.get(path));
+        for (int i = 1; i < lines.size(); i++) {
+            City c = parseLine(lines.get(i));
+            map.put(c.name, c);
+        }
+        return map;
+    }
+
+    public LocalTime localMeanTime(LocalTime zoneTime) {
+        double hourShift = (longitude / 180.0) * 12;
+        return zoneTime.plusSeconds((long)(hourShift * 3600));
+    }
+
+    public static Comparator<City> worstTimezoneFit() {
+        return Comparator.comparingDouble(c -> {
+            double geoHours = (c.longitude / 180.0) * 12;
+            return Math.abs(c.timezoneOffset - geoHours);
+        }).reversed();
+    }
+
+    @Override
+    public String toString() {
+        return name;
+    }
+}
+
+// 5. Klasa abstrakcyjna ClockHand
+public abstract class ClockHand {
+    protected double angle;
+    public abstract void setTime(LocalTime time);
+    public abstract String toSvg();
+}
+
+// 6. SecondHand - wskazówka sekundowa
+public class SecondHand extends ClockHand {
+    public void setTime(LocalTime time) {
+        this.angle = time.getSecond() * 6;
+    }
+
+    public String toSvg() {
+        return svgLine(angle, 90, "red", 1);
+    }
+}
+
+// 7. HourHand & MinuteHand
+public class HourHand extends ClockHand {
+    public void setTime(LocalTime time) {
+        this.angle = (time.getHour() % 12 + time.getMinute() / 60.0 + time.getSecond() / 3600.0) * 30;
+    }
+    public String toSvg() {
+        return svgLine(angle, 50, "black", 4);
+    }
+}
+
+public class MinuteHand extends ClockHand {
+    public void setTime(LocalTime time) {
+        this.angle = (time.getMinute() + time.getSecond() / 60.0) * 6;
+    }
+    public String toSvg() {
+        return svgLine(angle, 70, "black", 2);
+    }
+}
+
+// 8. Pomocnicza metoda do rysowania linii SVG
+private static String svgLine(double angle, int length, String color, int width) {
+    double rad = Math.toRadians(angle - 90);
+    int x2 = (int)(100 + length * Math.cos(rad));
+    int y2 = (int)(100 + length * Math.sin(rad));
+    return String.format("<line x1=\"100\" y1=\"100\" x2=\"%d\" y2=\"%d\" stroke=\"%s\" stroke-width=\"%d\" />", x2, y2, color, width);
+}
+
+// 9. AnalogClock z generowaniem SVG
+public class AnalogClock extends Clock {
+    private final List<ClockHand> hands = List.of(
+        new HourHand(), new MinuteHand(), new SecondHand()
+    );
+
+    public void updateHands() {
+        LocalTime time = LocalTime.of(hour, minute, second);
+        for (ClockHand h : hands) h.setTime(time);
+    }
+
+    public void toSvg(String path) throws IOException {
+        updateHands();
+        StringBuilder svg = new StringBuilder();
+        svg.append("<svg width=\"200\" height=\"200\" xmlns=\"http://www.w3.org/2000/svg\">\n");
+        svg.append("<circle cx=\"100\" cy=\"100\" r=\"90\" stroke=\"black\" stroke-width=\"3\" fill=\"white\" />\n");
+        for (ClockHand h : hands) svg.append(h.toSvg()).append("\n");
+        svg.append("</svg>");
+        Files.writeString(Paths.get(path), svg.toString());
+    }
+}
+
+// 10. City.generateAnalogClocksSvg - tworzenie plików SVG
+public static void generateAnalogClocksSvg(List<City> cities, AnalogClock clock) throws IOException {
+    String dir = clock.toString().replace(":", "_");
+    Files.createDirectories(Paths.get(dir));
+    for (City city : cities) {
+        clock.setTime(clock.hour, clock.minute, clock.second); // resetuje na główny czas
+        LocalTime time = LocalTime.of(clock.hour, clock.minute, clock.second);
+        LocalTime cityTime = city.localMeanTime(time);
+        clock.setTime(cityTime.getHour(), cityTime.getMinute(), cityTime.getSecond());
+        clock.toSvg(dir + "/" + city.toString() + ".svg");
+    }
+}
+
+// Przydatne klasy i metody Java:
+// - LocalTime.now(), LocalTime.of(h, m, s)
+// - Files.readAllLines(Paths.get(path)) - odczyt pliku
+// - Files.writeString(Paths.get(path), content) - zapis pliku
+// - List<String> lines = Files.readAllLines(...)
+// - Map<String, City> map = new HashMap<>()
+// - Comparator.comparingDouble(...)
+// - String.format(...) do formatowania napisów
+-----------
+-------------
+------------
+--------------
+-------------
+------------
+---------------
+-----------
+// ========================== KLASY I OBIEKTY ==========================
+// Klasa – szablon obiektu
+public class Osoba {
+    // pola (atrybuty)
+    private String imie;
+    private int wiek;
+
+    // konstruktor – tworzy obiekt i ustawia pola
+    public Osoba(String imie, int wiek) {
+        this.imie = imie;
+        this.wiek = wiek;
+    }
+
+    // metody (zachowanie)
+    public void przedstawSie() {
+        System.out.println("Cześć, jestem " + imie + ", mam " + wiek + " lat.");
+    }
+}
+
+// Tworzenie obiektu
+Osoba o = new Osoba("Jan", 30);
+o.przedstawSie();  // wywołanie metody
+
+// ========================== ENKAPSULACJA I KONSTRUKTORY ==========================
+// Enkapsulacja – ukrywanie danych za pomocą private + dostęp przez gettery/settery
+public class Konto {
+    private double saldo;
+
+    public Konto(double saldoPoczatkowe) {
+        if (saldoPoczatkowe < 0) saldoPoczatkowe = 0;
+        this.saldo = saldoPoczatkowe;
+    }
+
+    public double getSaldo() {
+        return saldo;
+    }
+
+    public void wplata(double kwota) {
+        if (kwota > 0) saldo += kwota;
+    }
+
+    public void wyplata(double kwota) {
+        if (kwota > 0 && saldo >= kwota) saldo -= kwota;
+    }
+}
+
+// ========================== DZIEDZICZENIE ==========================
+// Dziedziczenie – tworzenie nowej klasy na podstawie istniejącej (extends)
+public class Zwierze {
+    public void dajGlos() {
+        System.out.println("Jakieś zwierzę");
+    }
+}
+
+public class Pies extends Zwierze {
+    @Override
+    public void dajGlos() {
+        System.out.println("Hau Hau!");
+    }
+}
+
+// Użycie polimorfizmu
+Zwierze z = new Pies();
+z.dajGlos();  // "Hau Hau!"
+
+// ========================== ABSTRAKCJA ==========================
+// Klasa abstrakcyjna – nie można tworzyć obiektów, tylko dziedziczyć i implementować metody abstrakcyjne
+public abstract class Figura {
+    public abstract double pole();
+}
+
+public class Kolo extends Figura {
+    private double promien;
+
+    public Kolo(double promien) {
+        this.promien = promien;
+    }
+
+    @Override
+    public double pole() {
+        return Math.PI * promien * promien;
+    }
+}
+
+// Interfejsy – definiują zestaw metod do implementacji
+interface Latajacy {
+    void lec();
+}
+
+class Ptak implements Latajacy {
+    public void lec() {
+        System.out.println("Lecę wysoko!");
+    }
+}
+
+// ========================== KONTENERY (KOLEKCJE) ==========================
+// Lista dynamiczna
+import java.util.ArrayList;
+ArrayList<String> lista = new ArrayList<>();
+lista.add("Jan");
+lista.add("Anna");
+System.out.println(lista.get(0));  // "Jan"
+
+// Mapy – przechowują pary klucz-wartość
+import java.util.HashMap;
+HashMap<String, Integer> mapa = new HashMap<>();
+mapa.put("Jan", 25);
+mapa.put("Anna", 30);
+System.out.println(mapa.get("Anna"));  // 30
+
+// Iteracja po kolekcjach
+for (String imie : lista) {
+    System.out.println(imie);
+}
+
+// Sortowanie kolekcji
+import java.util.Collections;
+Collections.sort(lista);  // sortuje alfabetycznie
+
+// ========================== PLIKI I WYJĄTKI ==========================
+// Odczyt z pliku
+import java.io.File;
+import java.util.Scanner;
+
+try {
+    Scanner plik = new Scanner(new File("dane.txt"));
+    while (plik.hasNextLine()) {
+        String linia = plik.nextLine();
+        System.out.println(linia);
+    }
+    plik.close();
+} catch (Exception e) {
+    System.out.println("Błąd: " + e.getMessage());
+}
+
+// Zapis do pliku
+import java.io.FileWriter;
+
+try {
+    FileWriter fw = new FileWriter("wynik.txt");
+    fw.write("Hello World");
+    fw.close();
+} catch (Exception e) {
+    System.out.println("Błąd zapisu: " + e.getMessage());
+}
+
+// Obsługa wyjątków – try, catch, finally
+try {
+    int wynik = 10 / 0;
+} catch (ArithmeticException e) {
+    System.out.println("Nie można dzielić przez zero!");
+} finally {
+    System.out.println("Blok finally wykonany zawsze");
+}
+
+// Rzucanie wyjątków – throw i throws
+public void sprawdz(int wiek) throws IllegalArgumentException {
+    if (wiek < 0) throw new IllegalArgumentException("Wiek nie może być ujemny");
+}
+
+// ========================== PROGRAMOWANIE FUNKCYJNE ==========================
+// Lambda – uproszczona funkcja anonimowa
+import java.util.function.Function;
+Function<Integer, Integer> kwadrat = x -> x * x;
+System.out.println(kwadrat.apply(5));  // 25
+
+// Predykat – funkcja zwracająca boolean
+import java.util.function.Predicate;
+Predicate<String> jestPusty = s -> s.isEmpty();
+System.out.println(jestPusty.test(""));  // true
+
+// Stream API – operacje na kolekcjach (Java 8+)
+import java.util.List;
+import java.util.stream.Collectors;
+
+List<String> imiona = Arrays.asList("Jan", "Anna", "Piotr");
+List<String> dlugieImiona = imiona.stream()
+    .filter(s -> s.length() > 3)
+    .collect(Collectors.toList());
+System.out.println(dlugieImiona);  // [Anna, Piotr]
+
+// Metoda referencyjna (method reference)
+imiona.forEach(System.out::println);
+
+// ========================== DODATKOWE PRZYDATNE KONSTRUKCJE ==========================
+// toString – reprezentacja tekstowa obiektu
+@Override
+public String toString() {
+    return "Osoba{" + "imie='" + imie + '\'' + ", wiek=" + wiek + '}';
+}
+
+// equals i hashCode – porównywanie obiektów
+@Override
+public boolean equals(Object o) {
+    if (this == o) return true;
+    if (!(o instanceof Osoba)) return false;
+    Osoba osoba = (Osoba) o;
+    return wiek == osoba.wiek && imie.equals(osoba.imie);
+}
+@Override
+public int hashCode() {
+    return Objects.hash(imie, wiek);
+}
+
+// Konstruktor kopiujący
+public Osoba(Osoba inna) {
+    this.imie = inna.imie;
+    this.wiek = inna.wiek;
+}
+
+// Metoda statyczna
+public static int dodaj(int a, int b) {
+    return a + b;
+}
+
+// Klasa anonimowa (np. Comparator)
+Collections.sort(lista, new Comparator<String>() {
+    @Override
+    public int compare(String o1, String o2) {
+        return o1.length() - o2.length();
+    }
+});
+
+// Final – stałe i niezmienne
+final int MAX = 100;
+
+// Praca z tablicami
+int[] tab = {1, 2, 3, 4};
+for (int x : tab) {
+    System.out.println(x);
+}
+-----------
+------------
+-------------
+--------------
+--------------
+------------
+// ========================== PRAKTYCZNE DODATKI I WZORCE ==========================
+
+// 1. Wzorzec Singleton – klasa, która ma tylko jedną instancję
+public class Singleton {
+    private static Singleton instance;
+
+    private Singleton() {}  // prywatny konstruktor
+
+    public static Singleton getInstance() {
+        if (instance == null) {
+            instance = new Singleton();
+        }
+        return instance;
+    }
+}
+
+// 2. Builder – wygodny sposób budowania obiektów z wieloma opcjonalnymi polami
+public class OsobaBuilder {
+    private String imie;
+    private int wiek;
+
+    public OsobaBuilder setImie(String imie) {
+        this.imie = imie;
+        return this;
+    }
+
+    public OsobaBuilder setWiek(int wiek) {
+        this.wiek = wiek;
+        return this;
+    }
+
+    public Osoba build() {
+        return new Osoba(imie, wiek);
+    }
+}
+// Użycie:
+// Osoba o = new OsobaBuilder().setImie("Jan").setWiek(30).build();
+
+// 3. Optional – bezpieczna praca z wartościami, które mogą być null
+import java.util.Optional;
+
+Optional<String> imie = Optional.ofNullable(null);
+System.out.println(imie.orElse("Brak imienia"));  // wypisze "Brak imienia"
+
+// 4. Formatowanie tekstu – printf, String.format
+System.out.printf("Wiek: %d, Imię: %s%n", 30, "Jan");
+String tekst = String.format("Cena: %.2f zł", 15.6789);
+System.out.println(tekst);
+
+// 5. Stream API – filtrowanie, mapowanie, redukcja kolekcji
+List<Integer> liczby = Arrays.asList(1, 2, 3, 4, 5);
+int sumaParzystych = liczby.stream()
+    .filter(x -> x % 2 == 0)
+    .mapToInt(x -> x)
+    .sum();
+System.out.println("Suma parzystych: " + sumaParzystych);
+
+// 6. Metody referencyjne (method references)
+List<String> lista = Arrays.asList("ala", "kot", "pies");
+lista.stream()
+    .map(String::toUpperCase)
+    .forEach(System.out::println);
+
+// 7. Klasy generyczne – typy parametryzowane
+public class Para<T, U> {
+    private T pierwszy;
+    private U drugi;
+
+    public Para(T pierwszy, U drugi) {
+        this.pierwszy = pierwszy;
+        this.drugi = drugi;
+    }
+
+    public T getPierwszy() { return pierwszy; }
+    public U getDrugi() { return drugi; }
+}
+Para<String, Integer> p = new Para<>("Wiek", 30);
+System.out.println(p.getPierwszy() + ": " + p.getDrugi());
+
+// 8. Auto-boxing / unboxing
+Integer x = 10;      // automatycznie zamienione na Integer
+int y = x;           // automatycznie zamienione na int
+
+// 9. Praca z datą i czasem – API java.time (Java 8+)
+LocalDate data = LocalDate.of(2023, 5, 16);
+LocalDate dzis = LocalDate.now();
+Period wiek = Period.between(data, dzis);
+System.out.println("Liczba lat: " + wiek.getYears());
+
+// 10. Konkretne wyjątki do łapania – np. IOException, NumberFormatException
+try {
+    int n = Integer.parseInt("abc");
+} catch (NumberFormatException e) {
+    System.out.println("To nie jest liczba!");
+}
+
+// 11. Szybkie czytanie całej linii z pliku lub inputu
+BufferedReader br = new BufferedReader(new InputStreamReader(System.in));
+String linia = br.readLine();  // wymaga obsługi IOException
+
+// 12. Konstruktor kopiujący i klonowanie (Cloneable)
+public Osoba(Osoba o) {
+    this.imie = o.imie;
+    this.wiek = o.wiek;
+}
+
+@Override
+public Osoba clone() throws CloneNotSupportedException {
+    return (Osoba) super.clone();
+}
+
+// 13. Synchronized – synchronizacja wątków
+public synchronized void bezpiecznaMetoda() {
+    // kod bezpieczny dla wielowątkowości
+}
+
+// 14. Enum z metodami
+public enum Dzien {
+    PONIEDZIALEK(1), WTOREK(2);
+
+    private int nr;
+
+    Dzien(int nr) {
+        this.nr = nr;
+    }
+
+    public int getNr() {
+        return nr;
+    }
+}
+
+// 15. Metoda main – szybki szablon programu
+public static void main(String[] args) {
+    Scanner sc = new Scanner(System.in);
+    System.out.println("Podaj liczbę:");
+    int n = sc.nextInt();
+    System.out.println("Wpisałeś: " + n);
+}
+
+// 16. Konwersja String <-> int, double itp.
+int x = Integer.parseInt("123");
+String s = String.valueOf(123);
+
+// 17. Zapisywanie i odczytywanie obiektów (serializacja)
+import java.io.Serializable;
+
+public class Osoba implements Serializable {
+    private String imie;
+    private int wiek;
+}
+
+// 18. Debugowanie – wypisywanie stosu wywołań wyjątku
+try {
+    // kod
+} catch (Exception e) {
+    e.printStackTrace();
+}
 
